@@ -1,9 +1,21 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Search, Filter, BookOpen, Hash, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 const App = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLesson, setSelectedLesson] = useState('all');
+  const [flashcardMode, setFlashcardMode] = useState(false);
+  const [flashcardIndex, setFlashcardIndex] = useState(0);
+  const [showAnswer, setShowAnswer] = useState(false);
+  const [flashcardDirection, setFlashcardDirection] = useState('word');
+  const [flashcardOrder, setFlashcardOrder] = useState([]);
+  const [flashcardResults, setFlashcardResults] = useState({});
+  const [swipeDelta, setSwipeDelta] = useState(0);
+  const [swipeResult, setSwipeResult] = useState(null);
+  const [isTap, setIsTap] = useState(false);
+  const pointerStartX = useRef(null);
+  const pointerStartY = useRef(null);
+  const pointerIdRef = useRef(null);
 
   // 単語データの定義（第1課〜第17課 全単語網羅版）
   // 簡体字・ピンイン・意味のトリプル校正済み
@@ -20,7 +32,7 @@ const App = () => {
     { lesson: 1, word: "陈", pinyin: "Chén", meaning: "陳（姓）" },
     { lesson: 1, word: "打", pinyin: "dǎ", meaning: "打つ、たたく" },
     { lesson: 1, word: "大阪", pinyin: "Dàbǎn", meaning: "大阪" },
-    { lesson: 1, word: "の", pinyin: "de", meaning: "～の（構造助詞）" },
+    { lesson: 1, word: "的", pinyin: "de", meaning: "～の（構造助詞）" },
     { lesson: 1, word: "弟弟", pinyin: "dìdi", meaning: "弟" },
     { lesson: 1, word: "电脑", pinyin: "diànnǎo", meaning: "コンピュータ" },
     { lesson: 1, word: "独生", pinyin: "dúshēng", meaning: "一人っ子" },
@@ -1470,7 +1482,135 @@ const App = () => {
     });
   }, [searchTerm, selectedLesson, vocabularyData]);
 
+  const flashcards = useMemo(() => {
+    return filteredData.length > 0 ? filteredData : vocabularyData;
+  }, [filteredData, vocabularyData]);
+
+  useEffect(() => {
+    setFlashcardIndex(0);
+    setShowAnswer(false);
+    setFlashcardOrder(flashcards.map((_, index) => index));
+  }, [flashcards]);
+
   const lessons = ['all', ...Array.from({ length: 17 }, (_, i) => (i + 1).toString())];
+
+  const flashcardCount = flashcards.length;
+  const activeOrder = flashcardOrder.length === flashcardCount ? flashcardOrder : flashcards.map((_, index) => index);
+  const currentFlashcard = flashcardCount > 0 ? flashcards[activeOrder[Math.min(flashcardIndex, flashcardCount - 1)]] : null;
+  const currentCardKey = currentFlashcard ? `${currentFlashcard.lesson}-${currentFlashcard.word}` : null;
+  const currentCardResult = currentCardKey ? flashcardResults[currentCardKey] || { ok: 0, ng: 0 } : { ok: 0, ng: 0 };
+  const overallResults = Object.values(flashcardResults).reduce(
+    (acc, result) => ({ ok: acc.ok + result.ok, ng: acc.ng + result.ng }),
+    { ok: 0, ng: 0 }
+  );
+
+  const shuffleFlashcards = () => {
+    if (!flashcardCount) return;
+    const shuffled = [...activeOrder];
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    setFlashcardOrder(shuffled);
+    setFlashcardIndex(0);
+    setShowAnswer(false);
+  };
+
+  const nextFlashcard = () => {
+    if (!flashcardCount) return;
+    setFlashcardIndex((prev) => (prev + 1) % flashcardCount);
+    setShowAnswer(false);
+  };
+
+  const prevFlashcard = () => {
+    if (!flashcardCount) return;
+    setFlashcardIndex((prev) => (prev - 1 + flashcardCount) % flashcardCount);
+    setShowAnswer(false);
+  };
+
+  const recordFlashcardResult = (isCorrect) => {
+    if (!currentCardKey || !currentFlashcard) return;
+    setFlashcardResults((prev) => {
+      const current = prev[currentCardKey] || { ok: 0, ng: 0 };
+      return {
+        ...prev,
+        [currentCardKey]: {
+          ok: current.ok + (isCorrect ? 1 : 0),
+          ng: current.ng + (isCorrect ? 0 : 1),
+        },
+      };
+    });
+    setShowAnswer(false);
+    setSwipeDelta(0);
+    setSwipeResult(null);
+    setIsTap(false);
+    pointerStartX.current = null;
+    pointerStartY.current = null;
+    pointerIdRef.current = null;
+    nextFlashcard();
+  };
+
+  const getSwipeDirection = (deltaX) => {
+    if (deltaX > 80) return 'ok';
+    if (deltaX < -80) return 'ng';
+    return null;
+  };
+
+  const clearSwipeState = () => {
+    setSwipeDelta(0);
+    setSwipeResult(null);
+    setIsTap(false);
+    pointerStartX.current = null;
+    pointerStartY.current = null;
+    pointerIdRef.current = null;
+  };
+
+  const handlePointerDown = (event) => {
+    pointerIdRef.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointerStartX.current = event.clientX;
+    pointerStartY.current = event.clientY;
+    setSwipeDelta(0);
+    setSwipeResult(null);
+    setIsTap(true);
+  };
+
+  const handlePointerMove = (event) => {
+    if (pointerIdRef.current !== event.pointerId || pointerStartX.current === null) return;
+    const deltaX = event.clientX - pointerStartX.current;
+    const deltaY = event.clientY - pointerStartY.current;
+    if (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10) {
+      setIsTap(false);
+    }
+    setSwipeDelta(deltaX);
+    setSwipeResult(getSwipeDirection(deltaX));
+  };
+
+  const handlePointerUp = (event) => {
+    if (pointerIdRef.current !== null && event.pointerId !== pointerIdRef.current) return;
+    const deltaX = pointerStartX.current !== null ? event.clientX - pointerStartX.current : 0;
+    const direction = getSwipeDirection(deltaX);
+    if (direction === 'ok') {
+      recordFlashcardResult(true);
+    } else if (direction === 'ng') {
+      recordFlashcardResult(false);
+    } else if (isTap) {
+      setShowAnswer((prev) => !prev);
+      clearSwipeState();
+    } else {
+      clearSwipeState();
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const setFlashcardDirectionAndReset = (direction) => {
+    setFlashcardDirection(direction);
+    setShowAnswer(false);
+  };
+
+  const toggleAnswer = () => setShowAnswer((prev) => !prev);
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans">
@@ -1529,6 +1669,179 @@ const App = () => {
           </div>
         </header>
 
+        {/* Flashcard Mode */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-8">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <p className="text-slate-500 text-sm">フラッシュカードで覚える</p>
+              <h2 className="text-xl font-bold text-slate-900">カード学習モード</h2>
+            </div>
+            <button
+              onClick={() => setFlashcardMode((prev) => !prev)}
+              className="inline-flex items-center justify-center rounded-full border border-emerald-600 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100"
+            >
+              {flashcardMode ? 'カードを閉じる' : 'カードを表示'}
+            </button>
+          </div>
+
+          {flashcardMode && (
+            <div className="space-y-6">
+              <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { value: 'word', label: '漢字→意味' },
+                    { value: 'wordToPinyin', label: '漢字→ピンイン' },
+                    { value: 'meaning', label: '日本語→漢字' },
+                    { value: 'pinyin', label: 'ピンイン→漢字' },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => setFlashcardDirectionAndReset(option.value)}
+                      className={`rounded-2xl px-4 py-2 text-sm font-semibold transition ${
+                        flashcardDirection === option.value
+                          ? 'bg-emerald-600 text-white border border-emerald-600'
+                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={shuffleFlashcards}
+                  className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  シャッフル
+                </button>
+              </div>
+
+              <div className="mt-6 grid gap-5 lg:grid-cols-[1.5fr_1fr]">
+              <div
+                className={`rounded-[2rem] border p-8 text-center transition-all duration-300 ${
+                  swipeResult === 'ok'
+                    ? 'border-emerald-400 bg-emerald-50'
+                    : swipeResult === 'ng'
+                    ? 'border-red-400 bg-red-50'
+                    : 'border-slate-200 bg-slate-50'
+                }`}
+                style={{
+                  minHeight: '360px',
+                  maxWidth: '560px',
+                  margin: '0 auto',
+                  touchAction: 'pan-y',
+                }}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+              >
+                {currentFlashcard ? (
+                  <>
+                    <div className="text-slate-500 text-xs uppercase tracking-[0.35em] mb-4">L{currentFlashcard.lesson} フラッシュカード</div>
+                    <div className="text-slate-500 text-sm mb-3">
+                      {flashcardDirection === 'word' && '漢字→意味'}
+                      {flashcardDirection === 'wordToPinyin' && '漢字→ピンイン'}
+                      {flashcardDirection === 'meaning' && '意味→漢字'}
+                      {flashcardDirection === 'pinyin' && 'ピンイン→漢字'}
+                    </div>
+                    <div className={`text-[clamp(2rem,6vw,5rem)] ${showAnswer && flashcardDirection === 'word' ? 'font-japanese' : 'font-chinese'} font-bold leading-tight mb-4 break-words max-w-full mx-auto`}>
+                      {showAnswer ? (
+                        flashcardDirection === 'word' ? currentFlashcard.meaning
+                          : flashcardDirection === 'wordToPinyin' ? currentFlashcard.pinyin
+                          : flashcardDirection === 'meaning' ? currentFlashcard.word
+                          : currentFlashcard.word
+                      ) : (
+                        flashcardDirection === 'meaning' ? currentFlashcard.meaning
+                          : flashcardDirection === 'pinyin' ? currentFlashcard.pinyin
+                          : currentFlashcard.word
+                      )}
+                    </div>
+                    {(!showAnswer && flashcardDirection === 'word') || (showAnswer && flashcardDirection === 'word') ? (
+                      <div className="text-slate-600 text-lg mb-6">{currentFlashcard.pinyin}</div>
+                    ) : null}
+                    {showAnswer && flashcardDirection === 'wordToPinyin' ? (
+                      <div className="text-slate-600 text-lg mb-6 font-japanese">{currentFlashcard.meaning}</div>
+                    ) : null}
+                    {showAnswer && flashcardDirection === 'meaning' ? (
+                      <div className="text-slate-600 text-lg mb-6">{currentFlashcard.pinyin}</div>
+                    ) : null}
+                    {showAnswer && flashcardDirection === 'pinyin' ? (
+                      <div className="text-slate-600 text-lg mb-6 font-japanese">{currentFlashcard.meaning}</div>
+                    ) : null}
+                    <div className="mt-6 flex items-center justify-between gap-3">
+                      <button
+                        onClick={() => recordFlashcardResult(false)}
+                        className="flex h-16 w-16 items-center justify-center rounded-full bg-red-100 text-red-600 shadow-sm transition hover:bg-red-200"
+                      >
+                        <span className="text-3xl font-bold">←</span>
+                      </button>
+                      <button
+                        onClick={() => recordFlashcardResult(true)}
+                        className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 shadow-sm transition hover:bg-emerald-200"
+                      >
+                        <span className="text-3xl font-bold">→</span>
+                      </button>
+                    </div>
+                    <div className="mt-4 text-sm text-slate-500">
+                      {swipeResult === 'ok' && '→ フリックでOKを記録します'}
+                      {swipeResult === 'ng' && '← フリックでXを記録します'}
+                      {!swipeResult && (showAnswer ? 'タップで問題を表示します。' : 'タップで答えを表示します。カードを左右にフリックするとOK/Xを登録できます。')}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-slate-500">現在の条件に一致するカードがありません。</div>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-[2rem] border border-slate-200 bg-white p-5">
+                  <div className="text-slate-500 text-[11px] uppercase tracking-[0.35em] mb-3">カード情報</div>
+                  <div className="text-slate-900 text-sm font-semibold">全カード数</div>
+                  <div className="text-3xl font-bold text-emerald-600">{flashcardCount}</div>
+                </div>
+                <div className="rounded-[2rem] border border-slate-200 bg-white p-5">
+                  <div className="text-slate-500 text-[11px] uppercase tracking-[0.35em] mb-3">学習結果</div>
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className="text-slate-900 text-sm font-semibold">現在のカード</div>
+                      <div className="text-2xl font-bold text-emerald-600">OK {currentCardResult.ok} / X {currentCardResult.ng}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-900 text-sm font-semibold">合計</div>
+                      <div className="text-2xl font-bold text-slate-600">OK {overallResults.ok} / X {overallResults.ng}</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-[2rem] border border-slate-200 bg-white p-5">
+                  <div className="text-slate-500 text-[11px] uppercase tracking-[0.35em] mb-3">操作</div>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={prevFlashcard}
+                      className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                      disabled={!flashcardCount}
+                    >
+                      前へ
+                    </button>
+                    <button
+                      onClick={nextFlashcard}
+                      className="flex-1 rounded-2xl border border-emerald-600 bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                      disabled={!flashcardCount}
+                    >
+                      次へ
+                    </button>
+                  </div>
+                </div>
+                <div className="rounded-[2rem] border border-slate-200 bg-white p-5">
+                  <div className="text-slate-500 text-[11px] uppercase tracking-[0.35em] mb-3">現在のフィルタ</div>
+                  <div className="text-slate-900 text-sm font-semibold">{selectedLesson === 'all' ? '全レッスン' : `L${selectedLesson}`}</div>
+                  <div className="mt-2 text-slate-500 text-sm">検索: {searchTerm || 'なし'}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          )}
+        </div>
+
         {/* Results Info */}
         <div className="flex justify-between items-center mb-4 px-2">
           <span className="text-slate-500 text-xs font-medium">
@@ -1566,7 +1879,7 @@ const App = () => {
                       <td className="px-6 py-5 text-slate-400 text-xs font-bold font-mono text-center">
                         {String(item.lesson).padStart(2, '0')}
                       </td>
-                      <td className="px-6 py-5 text-slate-900 font-bold text-2xl font-serif tracking-tight">
+                      <td className="px-6 py-5 text-slate-900 font-bold text-2xl font-chinese tracking-tight">
                         {item.word}
                       </td>
                       <td className="px-6 py-5 text-emerald-600 font-semibold font-sans text-base">
