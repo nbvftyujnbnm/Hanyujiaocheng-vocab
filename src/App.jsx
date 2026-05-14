@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Search, Filter, BookOpen, Hash, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Search, Filter, BookOpen, Hash, AlertCircle, CheckCircle2, Download } from 'lucide-react';
 
 const App = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -10,12 +10,54 @@ const App = () => {
   const [flashcardDirection, setFlashcardDirection] = useState('word');
   const [flashcardOrder, setFlashcardOrder] = useState([]);
   const [flashcardResults, setFlashcardResults] = useState({});
+  const [reviewMode, setReviewMode] = useState(false);
+  const [showInstallPrompt, setShowInstallPrompt] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [swipeDelta, setSwipeDelta] = useState(0);
   const [swipeResult, setSwipeResult] = useState(null);
   const [isTap, setIsTap] = useState(false);
   const pointerStartX = useRef(null);
   const pointerStartY = useRef(null);
   const pointerIdRef = useRef(null);
+
+  // localStorageから学習履歴を読み込む
+  useEffect(() => {
+    const savedResults = localStorage.getItem('flashcardResults');
+    if (savedResults) {
+      try {
+        setFlashcardResults(JSON.parse(savedResults));
+      } catch (error) {
+        console.error('学習履歴の読み込みに失敗しました:', error);
+      }
+    }
+  }, []);
+
+  // 学習履歴が変更されたらlocalStorageに保存
+  useEffect(() => {
+    localStorage.setItem('flashcardResults', JSON.stringify(flashcardResults));
+  }, [flashcardResults]);
+
+  // PWAインストールプロンプトの処理
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallPrompt(true);
+    };
+
+    const handleAppInstalled = () => {
+      setShowInstallPrompt(false);
+      setDeferredPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
 
   // 単語データの定義（第1課〜第17課 全単語網羅版）
   // 簡体字・ピンイン・意味のトリプル校正済み
@@ -1489,8 +1531,38 @@ const App = () => {
   useEffect(() => {
     setFlashcardIndex(0);
     setShowAnswer(false);
-    setFlashcardOrder(flashcards.map((_, index) => index));
-  }, [flashcards]);
+    if (reviewMode) {
+      // 復習モード：間違えた問題を優先的に並べる
+      const indices = flashcards.map((_, index) => index);
+      const sorted = indices.sort((a, b) => {
+        const keyA = `${flashcards[a].lesson}-${flashcards[a].word}`;
+        const keyB = `${flashcards[b].lesson}-${flashcards[b].word}`;
+        const resultA = flashcardResults[keyA] || { ok: 0, ng: 0 };
+        const resultB = flashcardResults[keyB] || { ok: 0, ng: 0 };
+        
+        // 間違えた回数が多い順
+        const wrongA = resultA.ng;
+        const wrongB = resultB.ng;
+        if (wrongA !== wrongB) return wrongB - wrongA;
+        
+        // 次に、正解率が低い順
+        const totalA = resultA.ok + resultA.ng;
+        const totalB = resultB.ok + resultB.ng;
+        const rateA = totalA > 0 ? resultA.ok / totalA : 1;
+        const rateB = totalB > 0 ? resultB.ok / totalB : 1;
+        if (rateA !== rateB) return rateA - rateB;
+        
+        // 最後に、未学習を優先
+        if (totalA === 0 && totalB > 0) return -1;
+        if (totalA > 0 && totalB === 0) return 1;
+        
+        return 0;
+      });
+      setFlashcardOrder(sorted);
+    } else {
+      setFlashcardOrder(flashcards.map((_, index) => index));
+    }
+  }, [flashcards, reviewMode, flashcardResults]);
 
   const lessons = ['all', ...Array.from({ length: 17 }, (_, i) => (i + 1).toString())];
 
@@ -1610,7 +1682,16 @@ const App = () => {
     setShowAnswer(false);
   };
 
-  const toggleAnswer = () => setShowAnswer((prev) => !prev);
+  const handleInstallClick = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+      }
+      setShowInstallPrompt(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans">
@@ -1707,12 +1788,24 @@ const App = () => {
                     </button>
                   ))}
                 </div>
-                <button
-                  onClick={shuffleFlashcards}
-                  className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  シャッフル
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setReviewMode((prev) => !prev)}
+                    className={`rounded-2xl px-4 py-2 text-sm font-semibold transition ${
+                      reviewMode
+                        ? 'bg-red-600 text-white border border-red-600'
+                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {reviewMode ? '復習モードON' : '復習モードOFF'}
+                  </button>
+                  <button
+                    onClick={shuffleFlashcards}
+                    className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    シャッフル
+                  </button>
+                </div>
               </div>
 
               <div className="mt-6 grid gap-5 lg:grid-cols-[1.5fr_1fr]">

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" fill="#10b981" rx="24"/>
+  <g transform="translate(48,48)">
+    <path d="M0 32 L64 32 L64 96 L0 96 Z" fill="white"/>
+    <path d="M16 48 L48 48 M16 64 L48 64 M16 80 L48 80" stroke="#10b981" stroke-width="2" fill="none"/>
+    <circle cx="80" cy="64" r="16" fill="white"/>
+    <text x="80" y="70" text-anchor="middle" fill="#10b981" font-family="Arial" font-size="20" font-weight="bold">中</text>
+  </g>
+</svg>
